@@ -19,7 +19,8 @@ import (
 	"time"
 )
 
-const base = "https://enter.tochka.com/uapi/open-banking/v1.0"
+const base = "https://enter.tochka.com/uapi"
+const ob = "/open-banking/v1.0"
 
 type Config struct {
 	Year           int               `json:"year"`
@@ -29,6 +30,7 @@ type Config struct {
 	ExtraThreshold float64           `json:"extra_threshold"`
 	Deadlines      map[string]string `json:"deadlines"`
 	NotIncomeKW    []string          `json:"not_income_keywords"`
+	ENP            ENP               `json:"enp"`
 	Paid           []struct {
 		Date   string  `json:"date"`
 		Amount float64 `json:"amount"`
@@ -160,7 +162,7 @@ func appendLine(name string, t Tx) {
 }
 
 func sync(dry bool) {
-	accs, _ := get(api("GET", "/accounts", nil), "Data", "Account").([]any)
+	accs, _ := get(api("GET", ob+"/accounts", nil), "Data", "Account").([]any)
 	seen := map[string]bool{}
 	for _, t := range append(readLines("income.jsonl"), readLines("review.jsonl")...) {
 		seen[t.ID] = true
@@ -170,14 +172,14 @@ func sync(dry bool) {
 		aid := str(get(a, "accountId"))
 		fmt.Println("счёт:", aid)
 		end := time.Now()
-		init := api("POST", "/statements", map[string]any{"Data": map[string]any{"Statement": map[string]any{
+		init := api("POST", ob+"/statements", map[string]any{"Data": map[string]any{"Statement": map[string]any{
 			"accountId":     aid,
 			"startDateTime": end.AddDate(0, 0, -40).Format("2006-01-02"),
 			"endDateTime":   end.Format("2006-01-02")}}})
 		sid := str(get(init, "Data", "Statement", "statementId"))
 		var st map[string]any
 		for i := 0; ; i++ { // Created -> Processing -> Ready
-			st = api("GET", "/accounts/"+aid+"/statements/"+sid, nil)
+			st = api("GET", ob+"/accounts/"+aid+"/statements/"+sid, nil)
 			if str(get(st, "Data", "Statement", "0", "status")) == "Ready" {
 				break
 			}
@@ -209,7 +211,7 @@ func sync(dry bool) {
 	fmt.Println("новых:", n)
 }
 
-func report() string {
+func reportRows() []Row {
 	var inc, con []Income
 	for _, t := range readLines("income.jsonl") {
 		d, _ := time.Parse("2006-01-02", t.Date)
@@ -221,7 +223,11 @@ func report() string {
 			con = append(con, Income{d, p.Amount})
 		}
 	}
-	rows := Advances(inc, con, cfg)
+	return Advances(inc, con, cfg)
+}
+
+func report() string {
+	rows := reportRows()
 	total := rows[3].Income
 	var b strings.Builder
 	fmt.Fprintf(&b, "УСН %d: доход %.0f ₽\n", cfg.Year, total)
@@ -300,7 +306,9 @@ func main() {
 		fmt.Print(report())
 	case "remind":
 		remind()
+	case "draft":
+		draft(os.Args[2:])
 	default:
-		die("команды: sync [--dry] | calc | remind")
+		die("команды: sync [--dry] | calc | remind | draft")
 	}
 }
